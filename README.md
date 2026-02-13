@@ -1,4 +1,4 @@
-# flux-helm-wp
+# Flux Helm Wordpress setup
 
 A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordPress using Kustomization, HelmReleases, and OCI Helm charts.
 
