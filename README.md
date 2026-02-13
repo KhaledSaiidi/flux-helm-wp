@@ -98,7 +98,7 @@ This installs Flux and points it at this repository.
 
 ```bash
 flux bootstrap github \
-  --owner=gma1k \
+  --owner=GitUser \
   --repository=flux-helm-wp \
   --branch=main \
   --path=clusters/production \
