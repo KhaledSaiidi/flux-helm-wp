@@ -4,7 +4,7 @@ A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordP
 
 ---
 
-## What You'll Learn
+## Hands-on
 
 - **Flux** – GitOps with GitRepository, Kustomization, and HelmRelease
 - **OCI Helm** – Using Bitnami OCI charts
