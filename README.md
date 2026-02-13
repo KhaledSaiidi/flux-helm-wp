@@ -1,4 +1,4 @@
-# flux-wordpress-helm
+# flux-helm-wp
 
 A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordPress using Kustomization, HelmReleases, and OCI Helm charts.
 
@@ -82,8 +82,8 @@ A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordP
 
 ```bash
 # Clone this repo
-git clone https://github.com/gma1k/flux-wordpress-helm.git
-cd flux-wordpress-helm
+git clone https://github.com/gma1k/flux-helm-wp.git
+cd flux-helm-wp
 
 # Connect to your GKE cluster
 gcloud container clusters get-credentials YOUR_CLUSTER --region YOUR_REGION
@@ -99,7 +99,7 @@ This installs Flux and points it at this repository.
 ```bash
 flux bootstrap github \
   --owner=gma1k \
-  --repository=flux-wordpress-helm \
+  --repository=flux-helm-wp \
   --branch=main \
   --path=clusters/production \
   --personal
