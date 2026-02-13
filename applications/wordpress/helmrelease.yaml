@@ -1,0 +1,31 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: wordpress
+  namespace: wordpress
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: wordpress
+      version: "28.1.2"
+      sourceRef:
+        kind: HelmRepository
+        name: bitnami
+        namespace: flux-system
+  install:
+    createNamespace: true
+  values:
+    mariadb:
+      auth:
+        database: wordpress
+        username: wordpress
+        password: wordpress
+      primary:
+        persistence:
+          size: 4Gi
+    wordpressUsername: admin
+    wordpressPassword: admin
+    wordpressEmail: admin@example.com
+    persistence:
+      size: 4Gi
