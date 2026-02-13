@@ -149,8 +149,6 @@ kubectl port-forward -n wordpress svc/wordpress 8080:80
 
 ---
 
-## Hands-On: Try These
-
 ### 1. Change a Value and Watch GitOps Update
 
 Edit `applications/wordpress/helmrelease.yaml`, e.g.:
