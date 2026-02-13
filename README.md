@@ -21,7 +21,7 @@ A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordP
 ┌─────────────────────────────────────────────────────────────────────┐
 │  GKE Cluster                                                        │
 │                                                                     │
-│   GitHub (this repo)                                                │
+│   GitHub Repo                                                       │  
 │         │                                                           │
 │         ▼                                                           │
 │   ┌─────────────┐     ┌──────────────────┐     ┌───────────────┐    │
