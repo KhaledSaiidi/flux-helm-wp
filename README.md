@@ -15,8 +15,7 @@ A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordP
 
 ## Architecture
 
-**WordPress uses MariaDB** — the standard WordPress database.
-
+**WordPress uses MariaDB**
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  GKE Cluster                                                        │
