@@ -1,106 +1,200 @@
-# Flux Helm WordPress Setup
+# Flux Helm WordPress on Kind
 
-A hands-on project to learn **Flux CD** on a local **Kind** cluster: GitOps-style deployment of WordPress using Kustomizations, HelmReleases, and OCI Helm charts.
+A hands-on Flux CD project that deploys Bitnami WordPress and MariaDB into a local Kind cluster, with Cilium as the CNI and a wrapper script that automates the whole bootstrap flow.
 
----
+## What This Repo Does
 
-## Hands-on
+This repository is a small GitOps lab.
 
-- **Flux** – GitOps with GitRepository, Kustomization, and HelmRelease
-- **OCI Helm** – Using Bitnami OCI charts
-- **Kustomize** – Organizing clusters, infrastructure, and applications
-- **WordPress on Kubernetes** – Bitnami WordPress + MariaDB on Kind
-
----
+- Flux watches this Git repository.
+- Flux reconciles the `clusters/production` path.
+- The infrastructure layer creates the `wordpress` namespace and registers the Bitnami Helm repository.
+- The applications layer creates a `HelmRelease` for WordPress.
+- The WordPress chart deploys WordPress and MariaDB.
+- Runtime credentials are not stored in Git. They are injected at bootstrap time into a Kubernetes Secret and consumed by the HelmRelease.
 
 ## Architecture
 
-**WordPress uses MariaDB**
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Kind Cluster: flux-lab                                             │
-│                                                                     │
-│  Flux controllers in flux-system                                    │
-│    │                                                                │
-│    ▼                                                                │
-│  GitRepository: flux-system                                         │
-│    │                                                                │
-│    ▼                                                                │
-│  Kustomization: flux-system                                         │
-│    │                                                                │
-│    ├────▶ Kustomization: infrastructure                             │
-│    │         ├────▶ Namespace: wordpress                            │
-│    │         └────▶ HelmRepository: bitnami                         │
-│    │                                                                │
-│    └────▶ Kustomization: applications                               │
-│              └────▶ HelmRelease: wordpress                          │
-│                        └────▶ Bitnami WordPress + MariaDB           │
-│                                                                     │
-│  Cilium provides cluster networking                                 │
-└─────────────────────────────────────────────────────────────────────┘
-                 ▲
-                 │
-                 └──── GitHub repo: KhaledSaiidi/flux-helm-wp
-```
+```text
+GitHub Repo
+   |
+   v
+Flux GitRepository (flux-system)
+   |
+   v
+Flux Kustomization: flux-system
+   |
+   +--> Flux Kustomization: infrastructure
+   |      +--> Namespace: wordpress
+   |      +--> HelmRepository: bitnami
+   |
+   +--> Flux Kustomization: applications
+          +--> HelmRelease: wordpress
+                 +--> Bitnami WordPress
+                 +--> Bitnami MariaDB
 
----
+bootstrap-wrapper.sh
+   |
+   +--> creates or reuses Kind cluster
+   +--> installs Cilium
+   +--> installs Flux
+   +--> creates runtime Secret: wordpress-runtime-values
+   +--> waits for GitRepository, Kustomizations, HelmRelease, pods, and rollouts
+   +--> starts port-forward to localhost
+```
 
 ## Repository Layout
 
-```
+```text
 .
+├── applications/
+│   ├── kustomization.yaml
+│   └── wordpress/
+│       ├── helmrelease.yaml
+│       └── kustomization.yaml
+├── assets/
+│   ├── image-1.png
+│   ├── image-2.png
+│   ├── image-3.png
+│   ├── image-4.png
+│   ├── image-5.png
+│   ├── image-6.png
+│   └── image-7.png
+├── bootstrap-wrapper.sh
 ├── clusters/
 │   └── production/
-│       ├── kustomization.yaml
-│       ├── infrastructure.yaml
 │       ├── applications.yaml
-│       └── flux-system/
+│       ├── flux-system/
+│       │   ├── gotk-components.yaml
+│       │   ├── gotk-sync.yaml
+│       │   └── kustomization.yaml
+│       ├── infrastructure.yaml
+│       └── kustomization.yaml
 ├── infrastructure/
+│   ├── kustomization.yaml
 │   ├── namespace-wordpress.yaml
 │   └── sources/
-├── applications/
-│   └── wordpress/
-│       ├── kustomization.yaml
-│       └── helmrelease.yaml
+│       └── helmrepository-bitnami.yaml
+├── kind-flux.yaml
 └── README.md
 ```
 
----
+## Current Deployment Model
 
-## Getting Started
+### Cluster
 
-### Prerequisites
+- Local Kubernetes via Kind
+- Cluster name defaults to `flux-lab`
+- Default CNI is disabled in `kind-flux.yaml`
+- Cilium is installed by the wrapper
 
-- **Docker** – required by Kind
-- **kind** – to create the local Kubernetes cluster
-- **kubectl** – `kubectl get nodes`
-- **helm** – used to install Cilium
-- **flux CLI** – [Install Flux](https://fluxcd.io/flux/installation/)
-- **GitHub token** – For `flux bootstrap` (repo access)
-- **GitHub repository** – push this repo to `https://github.com/KhaledSaiidi/flux-helm-wp`
+### Flux
 
----
+- Flux is installed with `flux install`
+- No GitHub PAT is required for the repo sync flow in this project
+- Flux reads the public repository over HTTPS
+- Flux sync starts from `clusters/production`
 
-### Step 1: Clone the Repo
+### Credentials
+
+- WordPress and MariaDB credentials are not hardcoded in Git anymore
+- `applications/wordpress/helmrelease.yaml` reads them from a Kubernetes Secret using `valuesFrom`
+- The wrapper creates that Secret as `wordpress-runtime-values`
+- If you leave passwords blank during bootstrap, the wrapper auto-generates them
+
+## Prerequisites
+
+Install these tools before running anything:
+
+- `docker`
+- `kind`
+- `kubectl`
+- `helm`
+- `flux`
+- `awk`
+- `tr`
+
+The wrapper checks the required CLIs at startup and exits with a clear error if one is missing.
+
+## Recommended Quick Start
+
+The recommended path is the wrapper script.
 
 ```bash
 git clone https://github.com/KhaledSaiidi/flux-helm-wp.git
 cd flux-helm-wp
+chmod +x bootstrap-wrapper.sh
+./bootstrap-wrapper.sh
 ```
 
-This repo already points Flux at:
+What the wrapper does:
 
-```yaml
-url: https://github.com/KhaledSaiidi/flux-helm-wp.git
+1. Prompts for WordPress and MariaDB runtime values.
+2. Creates the Kind cluster from `kind-flux.yaml`, or reuses it if it already exists.
+3. Exports or uses the kubeconfig file.
+4. Installs or upgrades Cilium.
+5. Waits for all nodes to become `Ready`.
+6. Installs Flux controllers.
+7. Applies `clusters/production/flux-system`.
+8. Reconciles the Git source and Flux Kustomizations.
+9. Creates the runtime Secret in the `wordpress` namespace.
+10. Reconciles the applications layer.
+11. Waits for the HelmRelease, MariaDB, and WordPress to become healthy.
+12. Prints the final access information.
+13. Starts `kubectl port-forward` in the foreground.
+
+## Interactive Inputs
+
+During bootstrap, the wrapper prompts for:
+
+- WordPress admin username
+- WordPress admin email
+- WordPress admin password
+- MariaDB database name
+- MariaDB username
+- MariaDB password
+
+Behavior:
+
+- Press `Enter` to accept the defaults shown in brackets.
+- Leave either password blank to auto-generate a strong random password.
+- These values are stored in-cluster as a Kubernetes Secret, not in Git.
+
+## Exportable Environment Variables
+
+The wrapper supports these environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `KIND_CONFIG` | `./kind-flux.yaml` | Path to the Kind cluster config file |
+| `KUBECONFIG_PATH` | `./kind-flux-kubeconfig.yaml` | Path where the wrapper stores or uses the kubeconfig |
+| `CLUSTER_NAME` | parsed from `kind-flux.yaml` | Name of the Kind cluster |
+| `CILIUM_VERSION` | `1.19.1` | Cilium chart version to install |
+| `WORDPRESS_NAMESPACE` | `wordpress` | Namespace where WordPress is deployed |
+| `LOCAL_PORT` | `8080` | Local port used for port-forward |
+| `REMOTE_PORT` | `80` | Service port forwarded from the WordPress service |
+| `WAIT_INTERVAL` | `5` | Poll interval in seconds for wait loops |
+| `WORDPRESS_SECRET_NAME` | `wordpress-runtime-values` | Name of the runtime Secret created by the wrapper |
+
+Examples:
+
+```bash
+LOCAL_PORT=9090 ./bootstrap-wrapper.sh
 ```
 
-in `clusters/production/flux-system/gotk-sync.yaml`.
+```bash
+KUBECONFIG_PATH=$PWD/my-kind-kubeconfig.yaml ./bootstrap-wrapper.sh
+```
 
----
+```bash
+CILIUM_VERSION=1.19.2 ./bootstrap-wrapper.sh
+```
 
-### Step 2: Create a Kind Cluster
+## Manual Flow
 
-You said you want to use this config:
+If you want to run the steps manually instead of the wrapper, this is the flow the repo currently expects.
+
+### 1. Create the Kind cluster
 
 ```bash
 kind create cluster \
@@ -108,245 +202,271 @@ kind create cluster \
   --kubeconfig kind-flux-kubeconfig.yaml
 ```
 
----
-
-`kind-flux.yaml` in this repo creates a cluster named `flux-lab` with `disableDefaultCNI: true`:
-
-```yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-name: flux-lab
-networking:
-  disableDefaultCNI: true
-nodes:
-  - role: control-plane
-  - role: worker
-  - role: worker
-```
-
-After cluster creation, use that kubeconfig for all commands in this guide:
+### 2. Export kubeconfig
 
 ```bash
 export KUBECONFIG=$PWD/kind-flux-kubeconfig.yaml
 kubectl get nodes
 ```
 
-At this point, `kubectl get nodes` will usually show `NotReady`. That is expected because the default Kind CNI is disabled and you have not installed Cilium yet.
+At this point, nodes will usually be `NotReady` because `disableDefaultCNI: true` is set.
 
----
-
-### Step 3: Install Cilium
-
-Before Flux or WordPress can run correctly, the cluster needs networking.
-
-Install Cilium with Helm:
+### 3. Install Cilium
 
 ```bash
 helm repo add cilium https://helm.cilium.io/
 helm repo update
-helm install cilium cilium/cilium \
+helm upgrade --install cilium cilium/cilium \
   --version 1.19.1 \
   --namespace kube-system \
+  --create-namespace \
   --set image.pullPolicy=IfNotPresent \
   --set ipam.mode=kubernetes
 ```
 
-Then wait for Cilium to become healthy:
+Wait for Cilium and nodes:
 
 ```bash
-kubectl -n kube-system rollout status ds/cilium
-kubectl -n kube-system rollout status deploy/cilium-operator
+kubectl -n kube-system rollout status ds/cilium --timeout=300s
+kubectl -n kube-system rollout status deploy/cilium-operator --timeout=300s
+kubectl wait --for=condition=Ready nodes --all --timeout=300s
 kubectl get nodes
 ```
 
-Once Cilium is up, the nodes should become `Ready`.
-
----
-
-### Step 4: Install Flux and Apply the Sync Manifests
-
-For this public repository, install Flux first and then apply the sync manifests from this repo:
+### 4. Install Flux
 
 ```bash
 flux install
-
 kubectl apply -k clusters/production/flux-system
 ```
 
-What this does:
-
-- `flux install` installs the Flux controllers into the `flux-system` namespace
-- `kubectl apply -k clusters/production/flux-system` creates the `GitRepository` and Flux `Kustomization` objects from this repo
-- the `GitRepository` points Flux at `https://github.com/KhaledSaiidi/flux-helm-wp.git`
-- the `flux-system` Kustomization starts reconciling `./clusters/production`
-- that in turn applies the `infrastructure` and `applications` layers from Git
-
-If you see warnings about `last-applied-configuration`, that is expected when `flux install` creates resources first and `kubectl apply` manages them afterward.
-
----
-
-### Step 5: Watch Flux Deploy
+### 5. Wait for the source and Kustomizations
 
 ```bash
-# See git source reconcile
+flux reconcile source git flux-system
+flux reconcile kustomization flux-system
+
 flux get sources git -A
-
-# See Kustomizations reconcile
 flux get kustomizations -A
+```
 
-# See HelmReleases (WordPress + MariaDB)
+### 6. Create runtime credentials Secret
+
+Create the Secret in the `wordpress` namespace before reconciling the applications layer:
+
+```bash
+kubectl create namespace wordpress --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic wordpress-runtime-values \
+  -n wordpress \
+  --from-literal=wordpressUsername=admin \
+  --from-literal=wordpressPassword=admin \
+  --from-literal=wordpressEmail=admin@example.com \
+  --from-literal=mariadbDatabase=wordpress \
+  --from-literal=mariadbUsername=wordpress \
+  --from-literal=mariadbPassword=wordpress \
+  --dry-run=client -o yaml \
+  | kubectl label --local -f - reconcile.fluxcd.io/watch=Enabled -o yaml \
+  | kubectl apply -f -
+```
+
+### 7. Reconcile applications
+
+```bash
+flux reconcile kustomization applications
 flux get helmreleases -A
-
-# Watch pods in the wordpress namespace
 kubectl get pods -n wordpress -w
 ```
 
-Wait until WordPress and MariaDB pods are `Running` and `1/1` Ready (usually 2–3 minutes).
-
-What is happening in the cluster:
-
-1. Flux syncs `clusters/production`.
-2. Flux applies `infrastructure/namespace-wordpress.yaml`.
-3. Flux applies `infrastructure/sources/helmrepository-bitnami.yaml`.
-4. Flux applies `applications/wordpress/helmrelease.yaml`.
-5. The Helm controller installs the Bitnami `wordpress` chart.
-6. That chart creates the WordPress and MariaDB workloads in the `wordpress` namespace.
-
----
-
-### Step 6: Access WordPress
-
-On Kind, port-forwarding is the simplest option:
+### 8. Access WordPress
 
 ```bash
 kubectl port-forward -n wordpress svc/wordpress 8080:80
 ```
 
-Open `http://localhost:8080`.
+Then open:
 
-Default credentials from `applications/wordpress/helmrelease.yaml`:
+- Site: `http://localhost:8080`
+- Admin: `http://localhost:8080/wp-admin`
 
-- Username: `admin`
-- Password: `admin`
-- Email: `admin@example.com`
+## Runtime Secret and Credentials
 
----
+The runtime Secret is:
 
-### 1. Change a Value and Watch GitOps Update
-
-Edit `applications/wordpress/helmrelease.yaml`, e.g.:
-
-```yaml
-wordpressPassword: my-new-password
+```text
+wordpress-runtime-values
 ```
 
-Then:
+The wrapper stores:
+
+- `wordpressUsername`
+- `wordpressPassword`
+- `wordpressEmail`
+- `mariadbDatabase`
+- `mariadbUsername`
+- `mariadbPassword`
+
+Retrieve the current values with:
 
 ```bash
-git add -A
-git commit -m "Update WordPress password"
-git push origin main
-
-# Optional: trigger Flux immediately instead of waiting for the poll interval
-flux reconcile source git flux-system
-flux reconcile kustomization applications
+kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wordpressUsername}' | base64 -d && echo
+kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wordpressPassword}' | base64 -d && echo
+kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.mariadbUsername}' | base64 -d && echo
+kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.mariadbPassword}' | base64 -d && echo
+kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.mariadbDatabase}' | base64 -d && echo
 ```
 
-### 2. Explore Flux Resources
+This is especially useful if you chose auto-generated passwords.
+
+## How the HelmRelease Uses the Secret
+
+`applications/wordpress/helmrelease.yaml` now uses `valuesFrom` so that the chart reads credentials from the Secret instead of storing them inline in Git.
+
+This keeps the repository cleaner and avoids committing admin and database passwords into a public repo.
+
+## Common Day 2 Commands
+
+### Check Git source and Flux status
 
 ```bash
-# See what Flux is managing
-flux get kustomizations
+flux get sources git -A
+flux get kustomizations -A
 flux get helmreleases -A
-
-# Inspect the Helm release
-helm list -n wordpress
 ```
 
-### 3. Suspend and Resume Reconciliation
+### Force reconciliation
 
 ```bash
-# Pause automatic updates
-flux suspend kustomization applications
-
-# Resume
-flux resume kustomization applications
-```
-
-### 4. Change WordPress Chart Version
-
-In `applications/wordpress/helmrelease.yaml`:
-
-```yaml
-chart:
-  spec:
-    chart: wordpress
-    version: "27.0.0"  # Try a different version
-```
-
-Push to Git and reconcile as in step 1.
-
----
-
-## What Gets Deployed
-
-| Component | Namespace | Description                                  |
-|-----------|-----------|----------------------------------------------|
-| WordPress | wordpress | Bitnami WordPress chart                      |
-| MariaDB   | wordpress | Bitnami MariaDB – WordPress database         |
-
----
-
-## Customization
-
-| What to change          | File                                          |
-|-------------------------|-----------------------------------------------|
-| WordPress/MariaDB creds | `applications/wordpress/helmrelease.yaml`     |
-| Storage size            | `applications/wordpress/helmrelease.yaml` → `persistence.size` |
-| Chart version           | `applications/wordpress/helmrelease.yaml` → `chart.spec.version` |
-
-For production, move passwords into Kubernetes Secrets and reference them via `existingSecret` in the Helm values.
-
----
-
-## Troubleshooting
-
-```bash
-# Verify the active kubeconfig points at your Kind cluster
-kubectl config current-context
-
-# Nodes may stay NotReady until Cilium is installed
-kubectl get nodes
-
-# Cilium health
-kubectl -n kube-system get pods
-kubectl -n kube-system rollout status ds/cilium
-kubectl -n kube-system rollout status deploy/cilium-operator
-
-# Flux reconciliation
 flux reconcile source git flux-system
 flux reconcile kustomization infrastructure
 flux reconcile kustomization applications
-
-# Status
-flux get kustomizations -A
-flux get helmreleases -A
-
-# Pods and logs
-kubectl get pods -n wordpress
-kubectl logs -n wordpress -l app.kubernetes.io/name=wordpress -f
 ```
 
-If Flux does not start syncing after Step 4, verify all of the following:
+### Inspect WordPress resources
 
-- `KUBECONFIG` is set to `kind-flux-kubeconfig.yaml`
-- the repository `KhaledSaiidi/flux-helm-wp` exists on GitHub
-- your current branch is pushed to GitHub
-- `flux get sources git -A` shows the `flux-system` source becoming ready
+```bash
+kubectl get all -n wordpress
+kubectl get secret -n wordpress wordpress-runtime-values
+kubectl logs -n wordpress deploy/wordpress
+```
 
-If WordPress pods stay pending or crash, check Cilium first. With `disableDefaultCNI: true`, application networking depends entirely on Cilium being installed and healthy.
+### Access WordPress
 
----
+```bash
+kubectl port-forward -n wordpress svc/wordpress 8080:80
+```
+
+### Log in to WordPress admin
+
+Open:
+
+```text
+http://localhost:8080/wp-admin
+```
+
+Then use the username and password stored in `wordpress-runtime-values`.
+
+## Screenshots
+
+### 1. Wrapper prompts for runtime values and begins cluster creation
+
+This shows the script asking for WordPress and MariaDB values, with support for default values and auto-generated passwords.
+
+![Wrapper prompts for runtime values and starts Kind creation](assets/image-1.png)
+
+### 2. Kind cluster is created and Cilium installation begins
+
+At this stage the nodes are still `NotReady`, which is expected before Cilium finishes installing.
+
+![Kind creation and Cilium install](assets/image-2.png)
+
+### 3. Flux controllers are installed into `flux-system`
+
+This is the `flux install` phase where Flux CRDs, RBAC, services, and controllers are created.
+
+![Flux controllers installation](assets/image-3.png)
+
+### 4. Flux source, Kustomizations, and runtime Secret reconciliation
+
+This screenshot shows the Git source becoming ready, the root and infrastructure Kustomizations succeeding, and the runtime Secret being created before the applications reconcile.
+
+![Flux reconciliation and runtime Secret creation](assets/image-4.png)
+
+### 5. WordPress and MariaDB become healthy and port-forward starts
+
+This is the successful end state from the wrapper: the HelmRelease is ready, rollouts are complete, resources are listed, and the script prints the admin URL and credentials before starting port-forward.
+
+![Successful bootstrap and port-forward](assets/image-5.png)
+
+### 6. Retrieve WordPress and MariaDB credentials from the runtime Secret
+
+This shows the exact `kubectl` commands used to recover the values later, including auto-generated passwords.
+
+![Retrieving credentials from the runtime Secret](assets/image-6.png)
+
+### 7. WordPress admin dashboard after login
+
+This is the final result after visiting `/wp-admin` and logging in with the values stored in `wordpress-runtime-values`.
+
+![WordPress admin dashboard](assets/image-7.png)
+
+## Troubleshooting
+
+### The wrapper says a command is missing
+
+Install the missing CLI and run the script again.
+
+### Nodes stay `NotReady`
+
+Check Cilium first:
+
+```bash
+kubectl -n kube-system get pods
+kubectl -n kube-system rollout status ds/cilium --timeout=300s
+kubectl -n kube-system rollout status deploy/cilium-operator --timeout=300s
+kubectl get nodes
+```
+
+### Flux source is not ready
+
+```bash
+flux get sources git -A
+kubectl -n flux-system describe gitrepository flux-system
+kubectl -n flux-system logs deploy/source-controller --tail=100
+```
+
+### Applications are not reconciling
+
+Make sure the runtime Secret exists:
+
+```bash
+kubectl -n wordpress get secret wordpress-runtime-values
+flux get kustomizations -A
+flux get helmreleases -A
+```
+
+### WordPress is up but you cannot access it
+
+Make sure the wrapper is still running, or start port-forward manually:
+
+```bash
+kubectl port-forward -n wordpress svc/wordpress 8080:80
+```
+
+Then open `http://localhost:8080`.
+
+### You forgot the generated password
+
+Recover it from the runtime Secret:
+
+```bash
+kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wordpressPassword}' | base64 -d && echo
+```
+
+## Notes
+
+- This repo is for learning and local experimentation.
+- The current secret flow is much better than hardcoding passwords in Git, but it is still a local bootstrap pattern, not full production secret management.
+- For a stronger production approach, look at SOPS, External Secrets Operator, or another real secret backend.
 
 ## License
 

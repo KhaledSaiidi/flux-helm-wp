@@ -100,7 +100,11 @@ prompt_secret() {
 }
 
 generate_password() {
-  LC_ALL=C tr -dc 'A-Za-z0-9@#%+=:_-' </dev/urandom | head -c 24
+  local password=''
+  while (( ${#password} < 24 )); do
+    password+=$(LC_ALL=C tr -dc 'A-Za-z0-9@#%+=:_-' </dev/urandom | dd bs=1 count=24 status=none 2>/dev/null || true)
+  done
+  printf '%s' "${password:0:24}"
 }
 
 collect_wordpress_inputs() {
