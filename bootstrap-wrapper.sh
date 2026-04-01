@@ -11,6 +11,14 @@ readonly WORDPRESS_NAMESPACE="${WORDPRESS_NAMESPACE:-wordpress}"
 readonly LOCAL_PORT="${LOCAL_PORT:-8080}"
 readonly REMOTE_PORT="${REMOTE_PORT:-80}"
 readonly WAIT_INTERVAL="${WAIT_INTERVAL:-5}"
+readonly WORDPRESS_SECRET_NAME="${WORDPRESS_SECRET_NAME:-wordpress-runtime-values}"
+
+WORDPRESS_ADMIN_USERNAME=''
+WORDPRESS_ADMIN_PASSWORD=''
+WORDPRESS_ADMIN_EMAIL=''
+MARIADB_DATABASE=''
+MARIADB_USERNAME=''
+MARIADB_PASSWORD=''
 
 if [[ -t 1 ]]; then
   readonly COLOR_RED=$'\033[31m'
@@ -67,6 +75,70 @@ require_cmd() {
   fi
 }
 
+prompt_with_default() {
+  local prompt=$1
+  local default_value=$2
+  local input=''
+
+  while true; do
+    read -r -p "$(printf '%s%s [%s]%s ' "$COLOR_MAGENTA" "$prompt" "$default_value" "$COLOR_RESET")" input
+    input=${input:-$default_value}
+    if [[ -n "$input" ]]; then
+      printf '%s' "$input"
+      return 0
+    fi
+  done
+}
+
+prompt_secret() {
+  local prompt=$1
+  local input=''
+
+  read -r -s -p "$(printf '%s%s%s ' "$COLOR_MAGENTA" "$prompt" "$COLOR_RESET")" input
+  printf '\n' >&2
+  printf '%s' "$input"
+}
+
+generate_password() {
+  LC_ALL=C tr -dc 'A-Za-z0-9@#%+=:_-' </dev/urandom | head -c 24
+}
+
+collect_wordpress_inputs() {
+  log step "collecting runtime values for WordPress and MariaDB"
+  printf '%sℹ️  [info]%s these values are stored in the cluster as a Kubernetes Secret, not in Git\n' \
+    "$COLOR_BLUE" "$COLOR_RESET"
+  printf '%sℹ️  [info]%s press Enter to accept the defaults shown in brackets\n' \
+    "$COLOR_BLUE" "$COLOR_RESET"
+  printf '%sℹ️  [info]%s leave a password blank to generate a strong random value\n\n' \
+    "$COLOR_BLUE" "$COLOR_RESET"
+
+  WORDPRESS_ADMIN_USERNAME="$(prompt_with_default 'WordPress admin username' 'admin')"
+
+  while true; do
+    WORDPRESS_ADMIN_EMAIL="$(prompt_with_default 'WordPress admin email' 'admin@example.com')"
+    if [[ "$WORDPRESS_ADMIN_EMAIL" == *@*.* ]]; then
+      break
+    fi
+    log error "please provide a valid email address"
+  done
+
+  WORDPRESS_ADMIN_PASSWORD="$(prompt_secret 'WordPress admin password [leave blank to auto-generate]')"
+  if [[ -z "$WORDPRESS_ADMIN_PASSWORD" ]]; then
+    WORDPRESS_ADMIN_PASSWORD="$(generate_password)"
+    log info "generated a random WordPress admin password"
+  fi
+
+  MARIADB_DATABASE="$(prompt_with_default 'MariaDB database name' 'wordpress')"
+  MARIADB_USERNAME="$(prompt_with_default 'MariaDB username' 'wordpress')"
+  MARIADB_PASSWORD="$(prompt_secret 'MariaDB password [leave blank to auto-generate]')"
+  if [[ -z "$MARIADB_PASSWORD" ]]; then
+    MARIADB_PASSWORD="$(generate_password)"
+    log info "generated a random MariaDB password"
+  fi
+
+  printf '\n'
+}
+
 resource_exists() {
   local namespace=$1
   local kind=$2
@@ -120,6 +192,23 @@ wait_for_condition() {
   log ok "$kind/$name is Ready"
 }
 
+create_wordpress_runtime_secret() {
+  log step "creating or updating runtime Secret $WORDPRESS_SECRET_NAME in namespace $WORDPRESS_NAMESPACE"
+  kubectl create secret generic "$WORDPRESS_SECRET_NAME" \
+    --namespace "$WORDPRESS_NAMESPACE" \
+    --from-literal=wordpressUsername="$WORDPRESS_ADMIN_USERNAME" \
+    --from-literal=wordpressPassword="$WORDPRESS_ADMIN_PASSWORD" \
+    --from-literal=wordpressEmail="$WORDPRESS_ADMIN_EMAIL" \
+    --from-literal=mariadbDatabase="$MARIADB_DATABASE" \
+    --from-literal=mariadbUsername="$MARIADB_USERNAME" \
+    --from-literal=mariadbPassword="$MARIADB_PASSWORD" \
+    --dry-run=client \
+    -o yaml \
+    | kubectl label --local -f - reconcile.fluxcd.io/watch=Enabled -o yaml \
+    | kubectl apply -f -
+  log ok "runtime Secret $WORDPRESS_SECRET_NAME applied"
+}
+
 cluster_exists() {
   kind get clusters | grep -Fxq "$CLUSTER_NAME"
 }
@@ -145,8 +234,8 @@ ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} cluster name: $CLUSTER_NAME
 ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} kubeconfig: $KUBECONFIG_PATH
 ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} WordPress URL: http://localhost:$LOCAL_PORT
 ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} WordPress admin: http://localhost:$LOCAL_PORT/wp-admin
-${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} default username: admin
-${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} default password: admin
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} admin username: $WORDPRESS_ADMIN_USERNAME
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} admin password: $WORDPRESS_ADMIN_PASSWORD
 
 EOF
 }
@@ -158,6 +247,7 @@ main() {
   require_cmd helm
   require_cmd kind
   require_cmd kubectl
+  require_cmd tr
 
   if [[ ! -f "$KIND_CONFIG" ]]; then
     log error "kind config not found: $KIND_CONFIG"
@@ -169,6 +259,8 @@ main() {
   log step "using kind config: $KIND_CONFIG"
   log step "using kubeconfig: $KUBECONFIG_PATH"
   log step "target cluster name: $CLUSTER_NAME"
+
+  collect_wordpress_inputs
 
   if cluster_exists; then
     log info "kind cluster '$CLUSTER_NAME' already exists, skipping creation"
@@ -221,6 +313,11 @@ main() {
   wait_for_condition flux-system kustomization flux-system 300
 
   wait_for_condition flux-system kustomization infrastructure 300
+
+  create_wordpress_runtime_secret
+
+  log step "reconciling applications Kustomization after runtime Secret creation"
+  flux reconcile kustomization applications
   wait_for_condition flux-system kustomization applications 300
   wait_for_condition "$WORDPRESS_NAMESPACE" helmrelease wordpress 600
 

@@ -5,6 +5,31 @@ metadata:
   namespace: wordpress
 spec:
   interval: 10m
+  valuesFrom:
+    - kind: Secret
+      name: wordpress-runtime-values
+      valuesKey: wordpressUsername
+      targetPath: wordpressUsername
+    - kind: Secret
+      name: wordpress-runtime-values
+      valuesKey: wordpressPassword
+      targetPath: wordpressPassword
+    - kind: Secret
+      name: wordpress-runtime-values
+      valuesKey: wordpressEmail
+      targetPath: wordpressEmail
+    - kind: Secret
+      name: wordpress-runtime-values
+      valuesKey: mariadbDatabase
+      targetPath: mariadb.auth.database
+    - kind: Secret
+      name: wordpress-runtime-values
+      valuesKey: mariadbUsername
+      targetPath: mariadb.auth.username
+    - kind: Secret
+      name: wordpress-runtime-values
+      valuesKey: mariadbPassword
+      targetPath: mariadb.auth.password
   chart:
     spec:
       chart: wordpress
@@ -19,15 +44,8 @@ spec:
     service:
       type: ClusterIP
     mariadb:
-      auth:
-        database: wordpress
-        username: wordpress
-        password: wordpress
       primary:
         persistence:
           size: 4Gi
-    wordpressUsername: admin
-    wordpressPassword: admin
-    wordpressEmail: admin@example.com
     persistence:
       size: 4Gi
