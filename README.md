@@ -87,6 +87,14 @@ This is the final result after visiting `/wp-admin` and logging in with the valu
 
 ![WordPress admin dashboard](assets/image-7.png)
 
+### You forgot the generated password
+
+Recover it from the runtime Secret:
+
+```bash
+kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wordpressPassword}' | base64 -d && echo
+```
+
 ## Repository Layout
 
 ```text
@@ -443,14 +451,6 @@ kubectl port-forward -n wordpress svc/wordpress 8080:80
 ```
 
 Then open `http://localhost:8080`.
-
-### You forgot the generated password
-
-Recover it from the runtime Secret:
-
-```bash
-kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wordpressPassword}' | base64 -d && echo
-```
 
 ## Notes
 
