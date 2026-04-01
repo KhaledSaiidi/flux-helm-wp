@@ -12,6 +12,10 @@ readonly LOCAL_PORT="${LOCAL_PORT:-8080}"
 readonly REMOTE_PORT="${REMOTE_PORT:-80}"
 readonly WAIT_INTERVAL="${WAIT_INTERVAL:-5}"
 readonly WORDPRESS_SECRET_NAME="${WORDPRESS_SECRET_NAME:-wordpress-runtime-values}"
+readonly WEAVE_GITOPS_SECRET_NAME="${WEAVE_GITOPS_SECRET_NAME:-weave-gitops-runtime-values}"
+readonly WEAVE_GITOPS_LOCAL_PORT="${WEAVE_GITOPS_LOCAL_PORT:-9001}"
+readonly WEAVE_GITOPS_REMOTE_PORT="${WEAVE_GITOPS_REMOTE_PORT:-9001}"
+readonly WEAVE_GITOPS_SERVICE_NAME="${WEAVE_GITOPS_SERVICE_NAME:-ww-gitops-weave-gitops}"
 
 WORDPRESS_ADMIN_USERNAME=''
 WORDPRESS_ADMIN_PASSWORD=''
@@ -19,6 +23,9 @@ WORDPRESS_ADMIN_EMAIL=''
 MARIADB_DATABASE=''
 MARIADB_USERNAME=''
 MARIADB_PASSWORD=''
+WEAVE_GITOPS_ADMIN_USERNAME=''
+WEAVE_GITOPS_ADMIN_PASSWORD=''
+WEAVE_GITOPS_ADMIN_PASSWORD_HASH=''
 
 if [[ -t 1 ]]; then
   readonly COLOR_RED=$'\033[31m'
@@ -107,8 +114,8 @@ generate_password() {
   printf '%s' "${password:0:24}"
 }
 
-collect_wordpress_inputs() {
-  log step "collecting runtime values for WordPress and MariaDB"
+collect_runtime_inputs() {
+  log step "collecting runtime values for WordPress, MariaDB, and Weave GitOps"
   printf '%sℹ️  [info]%s these values are stored in the cluster as a Kubernetes Secret, not in Git\n' \
     "$COLOR_BLUE" "$COLOR_RESET"
   printf '%sℹ️  [info]%s press Enter to accept the defaults shown in brackets\n' \
@@ -140,7 +147,30 @@ collect_wordpress_inputs() {
     log info "generated a random MariaDB password"
   fi
 
+  WEAVE_GITOPS_ADMIN_USERNAME="$(prompt_with_default 'Weave GitOps admin username' 'admin')"
+  WEAVE_GITOPS_ADMIN_PASSWORD="$(prompt_secret 'Weave GitOps admin password [leave blank to auto-generate]')"
+  if [[ -z "$WEAVE_GITOPS_ADMIN_PASSWORD" ]]; then
+    WEAVE_GITOPS_ADMIN_PASSWORD="$(generate_password)"
+    log info "generated a random Weave GitOps admin password"
+  fi
+  WEAVE_GITOPS_ADMIN_PASSWORD_HASH="$(generate_weave_gitops_password_hash)"
+
   printf '\n'
+}
+
+generate_weave_gitops_password_hash() {
+  local password_hash=''
+  password_hash="$(gitops create dashboard ww-gitops \
+    --username="$WEAVE_GITOPS_ADMIN_USERNAME" \
+    --password="$WEAVE_GITOPS_ADMIN_PASSWORD" \
+    --export | sed -n 's/^[[:space:]]*passwordHash: //p')"
+
+  if [[ -z "$password_hash" ]]; then
+    log error "failed to generate Weave GitOps password hash"
+    exit 1
+  fi
+
+  printf '%s' "$password_hash"
 }
 
 resource_exists() {
@@ -213,6 +243,20 @@ create_wordpress_runtime_secret() {
   log ok "runtime Secret $WORDPRESS_SECRET_NAME applied"
 }
 
+create_weave_gitops_runtime_secret() {
+  log step "creating or updating runtime Secret $WEAVE_GITOPS_SECRET_NAME in namespace flux-system"
+  kubectl create secret generic "$WEAVE_GITOPS_SECRET_NAME" \
+    --namespace flux-system \
+    --from-literal=adminUserUsername="$WEAVE_GITOPS_ADMIN_USERNAME" \
+    --from-literal=adminUserPassword="$WEAVE_GITOPS_ADMIN_PASSWORD" \
+    --from-literal=adminUserPasswordHash="$WEAVE_GITOPS_ADMIN_PASSWORD_HASH" \
+    --dry-run=client \
+    -o yaml \
+    | kubectl label --local -f - reconcile.fluxcd.io/watch=Enabled -o yaml \
+    | kubectl apply -f -
+  log ok "runtime Secret $WEAVE_GITOPS_SECRET_NAME applied"
+}
+
 cluster_exists() {
   kind get clusters | grep -Fxq "$CLUSTER_NAME"
 }
@@ -238,8 +282,13 @@ ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} cluster name: $CLUSTER_NAME
 ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} kubeconfig: $KUBECONFIG_PATH
 ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} WordPress URL: http://localhost:$LOCAL_PORT
 ${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} WordPress admin: http://localhost:$LOCAL_PORT/wp-admin
-${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} admin username: $WORDPRESS_ADMIN_USERNAME
-${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} admin password: $WORDPRESS_ADMIN_PASSWORD
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} WordPress username: $WORDPRESS_ADMIN_USERNAME
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} WordPress password: $WORDPRESS_ADMIN_PASSWORD
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} Weave GitOps username: $WEAVE_GITOPS_ADMIN_USERNAME
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} Weave GitOps password: $WEAVE_GITOPS_ADMIN_PASSWORD
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} Weave GitOps access command:
+kubectl -n flux-system port-forward svc/$WEAVE_GITOPS_SERVICE_NAME $WEAVE_GITOPS_LOCAL_PORT:$WEAVE_GITOPS_REMOTE_PORT
+${COLOR_BLUE}ℹ️  [info]${COLOR_RESET} Weave GitOps URL after port-forward: http://localhost:$WEAVE_GITOPS_LOCAL_PORT
 
 EOF
 }
@@ -248,6 +297,7 @@ main() {
   require_cmd awk
   require_cmd docker
   require_cmd flux
+  require_cmd gitops
   require_cmd helm
   require_cmd kind
   require_cmd kubectl
@@ -264,7 +314,7 @@ main() {
   log step "using kubeconfig: $KUBECONFIG_PATH"
   log step "target cluster name: $CLUSTER_NAME"
 
-  collect_wordpress_inputs
+  collect_runtime_inputs
 
   if cluster_exists; then
     log info "kind cluster '$CLUSTER_NAME' already exists, skipping creation"
@@ -303,7 +353,7 @@ main() {
   kubectl get nodes
 
   log step "installing Flux controllers"
-  flux install
+  flux install --components-extra image-reflector-controller,image-automation-controller
 
   log step "applying Flux sync manifests from this repository"
   kubectl apply -k "$SCRIPT_DIR/clusters/production/flux-system"
@@ -319,11 +369,13 @@ main() {
   wait_for_condition flux-system kustomization infrastructure 300
 
   create_wordpress_runtime_secret
+  create_weave_gitops_runtime_secret
 
   log step "reconciling applications Kustomization after runtime Secret creation"
   flux reconcile kustomization applications
   wait_for_condition flux-system kustomization applications 300
   wait_for_condition "$WORDPRESS_NAMESPACE" helmrelease wordpress 600
+  wait_for_condition flux-system helmrelease ww-gitops 600
 
   log step "waiting for MariaDB statefulset rollout"
   kubectl -n "$WORDPRESS_NAMESPACE" rollout status statefulset/wordpress-mariadb --timeout=600s
@@ -333,6 +385,9 @@ main() {
 
   log step "current WordPress resources"
   kubectl -n "$WORDPRESS_NAMESPACE" get all
+
+  log step "current Weave GitOps resources"
+  kubectl -n flux-system get helmreleases,svc,deploy | grep -E 'ww-gitops|NAME' || true
 
   if ! port_available; then
     log error "local port $LOCAL_PORT is already in use"
