@@ -16,6 +16,8 @@ spec:
   install:
     createNamespace: true
   values:
+    service:
+      type: ClusterIP
     mariadb:
       auth:
         database: wordpress

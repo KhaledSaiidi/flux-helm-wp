@@ -1,0 +1,21 @@
+# Local kubeconfigs and kube directories
+*.kubeconfig
+*.kubeconfig.yaml
+*-kubeconfig
+*-kubeconfig.yaml
+.kube/
+
+# Kind and local cluster artifacts
+kind-*-kubeconfig.yaml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Local env files
+.env
+.env.*
+!.env.example

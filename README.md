@@ -188,6 +188,9 @@ If you see warnings about `last-applied-configuration`, that is expected when `f
 ### Step 5: Watch Flux Deploy
 
 ```bash
+# See git source reconcile
+flux get sources git -A
+
 # See Kustomizations reconcile
 flux get kustomizations -A
 
