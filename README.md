@@ -336,12 +336,8 @@ wordpress-runtime-values
 
 The wrapper stores:
 
-- `wordpressUsername`
-- `wordpressPassword`
-- `wordpressEmail`
-- `mariadbDatabase`
-- `mariadbUsername`
-- `mariadbPassword`
+- `wordpressUsername`, `wordpressPassword` and `wordpressEmail`
+- `mariadbDatabase`, `mariadbUsername` and `mariadbPassword`
 
 Retrieve the current values with:
 
