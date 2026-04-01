@@ -11,7 +11,6 @@ kind-*-kubeconfig.yaml
 # OS/editor noise
 .DS_Store
 Thumbs.db
-.codex
 *.swp
 *.swo
 *~

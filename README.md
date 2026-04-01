@@ -150,13 +150,7 @@ This is the final result after visiting `/wp-admin` and logging in with the valu
 
 Install these tools before running anything:
 
-- `docker`
-- `kind`
-- `kubectl`
-- `helm`
-- `flux`
-- `awk`
-- `tr`
+`docker`, `kind`, `kubectl`, `helm`, `flux`, `awk` & `tr`
 
 The wrapper checks the required CLIs at startup and exits with a clear error if one is missing.
 
