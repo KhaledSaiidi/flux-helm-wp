@@ -1,21 +1,98 @@
-# Local kubeconfigs and kube directories
+########################################
+# 🔐 Kubernetes / Kubeconfig / Access
+########################################
 *.kubeconfig
 *.kubeconfig.yaml
 *-kubeconfig
 *-kubeconfig.yaml
 .kube/
+kubeconfig*
+admin.conf
 
-# Kind and local cluster artifacts
+########################################
+# 🧪 Kind / Local clusters
+########################################
 kind-*-kubeconfig.yaml
+kind-config.yaml
+kind-cluster.yaml
+*.kind.yaml
 
-# OS/editor noise
+########################################
+# 🔑 Secrets / Sensitive data
+########################################
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+*.der
+
+secrets.yaml
+secret.yaml
+*secret*.yaml
+*secrets*.yaml
+
+# SOPS / encrypted files (optional depending your usage)
+*.dec.yaml
+*.dec.yml
+
+# Age / GPG
+*.agekey
+*.asc
+*.gpg
+
+########################################
+# ⚙️ Flux / GitOps local artifacts
+########################################
+# Flux CLI local cache (if used)
+.flux/
+flux-system/*.pem
+flux-system/*.key
+
+# Generated manifests (optional)
+rendered/
+build/
+dist/
+
+########################################
+# 📦 Helm
+########################################
+*.tgz
+charts/*.tgz
+charts/*/charts/
+charts/*/tmp/
+
+########################################
+# 🧰 Terraform (if you mix infra)
+########################################
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+########################################
+# 🧪 Logs / temp / debug
+########################################
+*.log
+logs/
+tmp/
+temp/
+
+########################################
+# 💻 OS / Editor noise
+########################################
 .DS_Store
 Thumbs.db
 *.swp
 *.swo
 *~
+.vscode/
+.idea/
 
-# Local env files
+########################################
+# 🌱 Environment files
+########################################
 .env
 .env.*
 !.env.example
