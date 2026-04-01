@@ -43,6 +43,50 @@ bootstrap-wrapper.sh
    +--> starts port-forward to localhost
 ```
 
+## Screenshots
+
+### 1. Wrapper prompts for runtime values and begins cluster creation
+
+This shows the script asking for WordPress and MariaDB values, with support for default values and auto-generated passwords.
+
+![Wrapper prompts for runtime values and starts Kind creation](assets/image-1.png)
+
+### 2. Kind cluster is created and Cilium installation begins
+
+At this stage the nodes are still `NotReady`, which is expected before Cilium finishes installing.
+
+![Kind creation and Cilium install](assets/image-2.png)
+
+### 3. Flux controllers are installed into `flux-system`
+
+This is the `flux install` phase where Flux CRDs, RBAC, services, and controllers are created.
+
+![Flux controllers installation](assets/image-3.png)
+
+### 4. Flux source, Kustomizations, and runtime Secret reconciliation
+
+This screenshot shows the Git source becoming ready, the root and infrastructure Kustomizations succeeding, and the runtime Secret being created before the applications reconcile.
+
+![Flux reconciliation and runtime Secret creation](assets/image-4.png)
+
+### 5. WordPress and MariaDB become healthy and port-forward starts
+
+This is the successful end state from the wrapper: the HelmRelease is ready, rollouts are complete, resources are listed, and the script prints the admin URL and credentials before starting port-forward.
+
+![Successful bootstrap and port-forward](assets/image-5.png)
+
+### 6. Retrieve WordPress and MariaDB credentials from the runtime Secret
+
+This shows the exact `kubectl` commands used to recover the values later, including auto-generated passwords.
+
+![Retrieving credentials from the runtime Secret](assets/image-6.png)
+
+### 7. WordPress admin dashboard after login
+
+This is the final result after visiting `/wp-admin` and logging in with the values stored in `wordpress-runtime-values`.
+
+![WordPress admin dashboard](assets/image-7.png)
+
 ## Repository Layout
 
 ```text
@@ -364,50 +408,6 @@ http://localhost:8080/wp-admin
 ```
 
 Then use the username and password stored in `wordpress-runtime-values`.
-
-## Screenshots
-
-### 1. Wrapper prompts for runtime values and begins cluster creation
-
-This shows the script asking for WordPress and MariaDB values, with support for default values and auto-generated passwords.
-
-![Wrapper prompts for runtime values and starts Kind creation](assets/image-1.png)
-
-### 2. Kind cluster is created and Cilium installation begins
-
-At this stage the nodes are still `NotReady`, which is expected before Cilium finishes installing.
-
-![Kind creation and Cilium install](assets/image-2.png)
-
-### 3. Flux controllers are installed into `flux-system`
-
-This is the `flux install` phase where Flux CRDs, RBAC, services, and controllers are created.
-
-![Flux controllers installation](assets/image-3.png)
-
-### 4. Flux source, Kustomizations, and runtime Secret reconciliation
-
-This screenshot shows the Git source becoming ready, the root and infrastructure Kustomizations succeeding, and the runtime Secret being created before the applications reconcile.
-
-![Flux reconciliation and runtime Secret creation](assets/image-4.png)
-
-### 5. WordPress and MariaDB become healthy and port-forward starts
-
-This is the successful end state from the wrapper: the HelmRelease is ready, rollouts are complete, resources are listed, and the script prints the admin URL and credentials before starting port-forward.
-
-![Successful bootstrap and port-forward](assets/image-5.png)
-
-### 6. Retrieve WordPress and MariaDB credentials from the runtime Secret
-
-This shows the exact `kubectl` commands used to recover the values later, including auto-generated passwords.
-
-![Retrieving credentials from the runtime Secret](assets/image-6.png)
-
-### 7. WordPress admin dashboard after login
-
-This is the final result after visiting `/wp-admin` and logging in with the values stored in `wordpress-runtime-values`.
-
-![WordPress admin dashboard](assets/image-7.png)
 
 ## Troubleshooting
 
