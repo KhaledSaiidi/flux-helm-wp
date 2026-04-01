@@ -1,6 +1,6 @@
-# Flux Helm Wordpress setup
+# Flux Helm WordPress Setup
 
-A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordPress using Kustomization, HelmReleases, and OCI Helm charts.
+A hands-on project to learn **Flux CD** on a local **Kind** cluster: GitOps-style deployment of WordPress using Kustomizations, HelmReleases, and OCI Helm charts.
 
 ---
 
@@ -9,7 +9,7 @@ A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordP
 - **Flux** – GitOps with GitRepository, Kustomization, and HelmRelease
 - **OCI Helm** – Using Bitnami OCI charts
 - **Kustomize** – Organizing clusters, infrastructure, and applications
-- **WordPress on Kubernetes** – Bitnami WordPress + MariaDB on GKE
+- **WordPress on Kubernetes** – Bitnami WordPress + MariaDB on Kind
 
 ---
 
@@ -18,27 +18,29 @@ A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordP
 **WordPress uses MariaDB**
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  GKE Cluster                                                        │
+│  Kind Cluster: flux-lab                                             │
 │                                                                     │
-│   GitHub Repo                                                       │  
-│         │                                                           │
-│         ▼                                                           │
-│   ┌─────────────┐     ┌──────────────────┐     ┌───────────────┐    │
-│   │   Flux      │────▶│  Kustomization   │────▶│ HelmReleases  │    │
-│   │ GitRepository     │  infrastructure  │     │ wordpress     │    │
-│   └─────────────┘     │  applications    │     │ (Bitnami)     │    │
-│         │             └──────────────────┘     └───────┬───────┘    │
-│         │                        │                      │           │
-│         │                        │                      ▼           │
-│         │                        │             ┌─────────────────┐  │
-│         │                        │             │  WordPress      │  │
-│         │                        │             │  + MariaDB      │  │
-│         │                        │             │  (Bitnami)      │  │
-│         │                        │             └─────────────────┘  │
-└─────────┼───────────────────────────────────────────────────────────┘
-          │
-          ▼
-    GitHub Repo
+│  Flux controllers in flux-system                                    │
+│    │                                                                │
+│    ▼                                                                │
+│  GitRepository: flux-system                                         │
+│    │                                                                │
+│    ▼                                                                │
+│  Kustomization: flux-system                                         │
+│    │                                                                │
+│    ├────▶ Kustomization: infrastructure                             │
+│    │         ├────▶ Namespace: wordpress                            │
+│    │         └────▶ HelmRepository: bitnami                         │
+│    │                                                                │
+│    └────▶ Kustomization: applications                               │
+│              └────▶ HelmRelease: wordpress                          │
+│                        └────▶ Bitnami WordPress + MariaDB           │
+│                                                                     │
+│  Cilium provides cluster networking                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                 ▲
+                 │
+                 └──── GitHub repo: KhaledSaiidi/flux-helm-wp
 ```
 
 ---
@@ -69,46 +71,121 @@ A hands-on project to learn **Flux CD** on GKE: GitOps-style deployment of WordP
 
 ### Prerequisites
 
-- **GKE cluster** – Create one or use an existing sandbox
-- **gcloud** – `gcloud container clusters get-credentials ...`
+- **Docker** – required by Kind
+- **kind** – to create the local Kubernetes cluster
 - **kubectl** – `kubectl get nodes`
+- **helm** – used to install Cilium
 - **flux CLI** – [Install Flux](https://fluxcd.io/flux/installation/)
 - **GitHub token** – For `flux bootstrap` (repo access)
+- **GitHub repository** – push this repo to `https://github.com/KhaledSaiidi/flux-helm-wp`
 
 ---
 
-### Step 1: Clone and Connect to Your Cluster
+### Step 1: Clone the Repo
 
 ```bash
-# Clone this repo
-git clone https://github.com/gma1k/flux-helm-wp.git
+git clone https://github.com/KhaledSaiidi/flux-helm-wp.git
 cd flux-helm-wp
+```
 
-# Connect to your GKE cluster
-gcloud container clusters get-credentials YOUR_CLUSTER --region YOUR_REGION
+This repo already points Flux at:
+
+```yaml
+url: https://github.com/KhaledSaiidi/flux-helm-wp.git
+```
+
+in `clusters/production/flux-system/gotk-sync.yaml`.
+
+---
+
+### Step 2: Create a Kind Cluster
+
+You said you want to use this config:
+
+```bash
+kind create cluster \
+  --config kind-flux.yaml \
+  --kubeconfig kind-flux-kubeconfig.yaml
+```
+
+---
+
+`kind-flux.yaml` in this repo creates a cluster named `flux-lab` with `disableDefaultCNI: true`:
+
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: flux-lab
+networking:
+  disableDefaultCNI: true
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+```
+
+After cluster creation, use that kubeconfig for all commands in this guide:
+
+```bash
+export KUBECONFIG=$PWD/kind-flux-kubeconfig.yaml
 kubectl get nodes
 ```
 
+At this point, `kubectl get nodes` will usually show `NotReady`. That is expected because the default Kind CNI is disabled and you have not installed Cilium yet.
+
 ---
 
-### Step 2: Bootstrap Flux
+### Step 3: Install Cilium
 
-This installs Flux and points it at this repository.
+Before Flux or WordPress can run correctly, the cluster needs networking.
+
+Install Cilium with Helm:
 
 ```bash
-flux bootstrap github \
-  --owner=GitUser \
-  --repository=flux-helm-wp \
-  --branch=main \
-  --path=clusters/production \
-  --personal
+helm repo add cilium https://helm.cilium.io/
+helm repo update
+helm install cilium cilium/cilium \
+  --version 1.19.1 \
+  --namespace kube-system \
+  --set image.pullPolicy=IfNotPresent \
+  --set ipam.mode=kubernetes
 ```
 
-When prompted, authenticate with GitHub (browser or token).
+Then wait for Cilium to become healthy:
+
+```bash
+kubectl -n kube-system rollout status ds/cilium
+kubectl -n kube-system rollout status deploy/cilium-operator
+kubectl get nodes
+```
+
+Once Cilium is up, the nodes should become `Ready`.
 
 ---
 
-### Step 3: Watch Flux Deploy
+### Step 4: Install Flux and Apply the Sync Manifests
+
+For this public repository, install Flux first and then apply the sync manifests from this repo:
+
+```bash
+flux install
+
+kubectl apply -k clusters/production/flux-system
+```
+
+What this does:
+
+- `flux install` installs the Flux controllers into the `flux-system` namespace
+- `kubectl apply -k clusters/production/flux-system` creates the `GitRepository` and Flux `Kustomization` objects from this repo
+- the `GitRepository` points Flux at `https://github.com/KhaledSaiidi/flux-helm-wp.git`
+- the `flux-system` Kustomization starts reconciling `./clusters/production`
+- that in turn applies the `infrastructure` and `applications` layers from Git
+
+If you see warnings about `last-applied-configuration`, that is expected when `flux install` creates resources first and `kubectl apply` manages them afterward.
+
+---
+
+### Step 5: Watch Flux Deploy
 
 ```bash
 # See Kustomizations reconcile
@@ -123,25 +200,28 @@ kubectl get pods -n wordpress -w
 
 Wait until WordPress and MariaDB pods are `Running` and `1/1` Ready (usually 2–3 minutes).
 
+What is happening in the cluster:
+
+1. Flux syncs `clusters/production`.
+2. Flux applies `infrastructure/namespace-wordpress.yaml`.
+3. Flux applies `infrastructure/sources/helmrepository-bitnami.yaml`.
+4. Flux applies `applications/wordpress/helmrelease.yaml`.
+5. The Helm controller installs the Bitnami `wordpress` chart.
+6. That chart creates the WordPress and MariaDB workloads in the `wordpress` namespace.
+
 ---
 
-### Step 4: Access WordPress
+### Step 6: Access WordPress
 
-**Option A – LoadBalancer (if exposed by the chart):**
-
-```bash
-kubectl get svc -n wordpress
-# Use EXTERNAL-IP in browser, e.g. http://<EXTERNAL-IP>
-```
-
-**Option B – Port-forward (recommended for local access):**
+On Kind, port-forwarding is the simplest option:
 
 ```bash
 kubectl port-forward -n wordpress svc/wordpress 8080:80
-# Open http://localhost:8080
 ```
 
-**Default credentials** (see `applications/wordpress/helmrelease.yaml`):
+Open `http://localhost:8080`.
+
+Default credentials from `applications/wordpress/helmrelease.yaml`:
 
 - Username: `admin`
 - Password: `admin`
@@ -164,7 +244,7 @@ git add -A
 git commit -m "Update WordPress password"
 git push origin main
 
-# Trigger Flux to reconcile
+# Optional: trigger Flux immediately instead of waiting for the poll interval
 flux reconcile source git flux-system
 flux reconcile kustomization applications
 ```
@@ -229,6 +309,17 @@ For production, move passwords into Kubernetes Secrets and reference them via `e
 ## Troubleshooting
 
 ```bash
+# Verify the active kubeconfig points at your Kind cluster
+kubectl config current-context
+
+# Nodes may stay NotReady until Cilium is installed
+kubectl get nodes
+
+# Cilium health
+kubectl -n kube-system get pods
+kubectl -n kube-system rollout status ds/cilium
+kubectl -n kube-system rollout status deploy/cilium-operator
+
 # Flux reconciliation
 flux reconcile source git flux-system
 flux reconcile kustomization infrastructure
@@ -242,6 +333,15 @@ flux get helmreleases -A
 kubectl get pods -n wordpress
 kubectl logs -n wordpress -l app.kubernetes.io/name=wordpress -f
 ```
+
+If Flux does not start syncing after Step 4, verify all of the following:
+
+- `KUBECONFIG` is set to `kind-flux-kubeconfig.yaml`
+- the repository `KhaledSaiidi/flux-helm-wp` exists on GitHub
+- your current branch is pushed to GitHub
+- `flux get sources git -A` shows the `flux-system` source becoming ready
+
+If WordPress pods stay pending or crash, check Cilium first. With `disableDefaultCNI: true`, application networking depends entirely on Cilium being installed and healthy.
 
 ---
 
