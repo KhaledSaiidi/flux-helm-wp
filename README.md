@@ -85,11 +85,17 @@ This shows the exact `kubectl` commands used to recover the values later, includ
 
 ![Retrieving credentials from the runtime Secret](assets/image-6.png)
 
-### 7. WordPress admin dashboard after login
+### 7. Weave GitOps OSS applications view after login
 
-This is the final result after visiting `/wp-admin` and logging in with the values stored in `wordpress-runtime-values`.
+This shows the Weave GitOps OSS dashboard after port-forwarding `svc/ww-gitops-weave-gitops` on port `9001` and logging in with the values stored in `weave-gitops-runtime-values`. It gives you a Flux-focused UI view of Kustomizations, sources, and application health.
 
-![WordPress admin dashboard](assets/image-7.png)
+![Weave GitOps OSS applications view](assets/image-7.png)
+
+### 8. WordPress admin dashboard after login
+
+This is the WordPress admin dashboard after visiting `/wp-admin` and logging in with the values stored in `wordpress-runtime-values`.
+
+![WordPress admin dashboard](assets/image-8.png)
 
 ### You forgot the generated password
 
