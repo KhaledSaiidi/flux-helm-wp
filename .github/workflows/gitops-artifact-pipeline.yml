@@ -12,7 +12,7 @@ permissions:
   id-token: write
 
 jobs:
-  push-gitops-artifact:
+  gitops-artifact:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -47,9 +47,9 @@ jobs:
 
       - name: Setup Cosign
         id: setup_cosign
-        uses: sigstore/cosign-installer@main
+        uses: sigstore/cosign-installer@v4.0.0
         with:
-          cosign-release: latest
+          cosign-release: v3.0.3
 
       - name: "🧰 Tooling setup result"
         if: ${{ always() }}
