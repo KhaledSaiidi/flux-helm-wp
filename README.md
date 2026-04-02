@@ -1,13 +1,15 @@
 # Flux Helm WordPress and Weave GitOps on Kind
 
-A hands-on Flux CD project that deploys Bitnami WordPress, MariaDB, and Weave GitOps OSS into a local Kind cluster, with Cilium as the CNI and a wrapper script that automates the whole bootstrap flow.
+A hands-on Flux CD project that deploys Bitnami WordPress, MariaDB, and Weave GitOps OSS into a local Kind cluster, with Cilium as the CNI, a GitHub Actions pipeline that publishes signed GitOps OCI artifacts to GHCR, and a wrapper script that automates the bootstrap flow.
 
 ## What This Repo Does
 
 This repository is a small GitOps lab.
 
-- Flux watches this Git repository.
-- Flux reconciles the `clusters/production` path.
+- GitHub Actions packages this repository as a reproducible OCI artifact and pushes it to GHCR.
+- GitHub Actions signs that OCI artifact with Cosign using GitHub OIDC.
+- Flux watches the OCI artifact in GHCR, not the Git repository directly.
+- Flux reconciles the `clusters/production` path from the extracted OCI artifact.
 - The infrastructure layer creates the `wordpress` namespace and registers the Bitnami Helm repository.
 - The applications layer creates `HelmRelease` objects for WordPress and Weave GitOps OSS.
 - The WordPress chart deploys WordPress and MariaDB.
@@ -20,7 +22,17 @@ This repository is a small GitOps lab.
 GitHub Repo
    |
    v
-Flux GitRepository (flux-system)
+GitHub Actions: gitops-artifact-pipeline.yml
+   |
+   +--> flux push artifact
+   +--> cosign sign --yes
+   |
+   v
+GHCR OCI Artifact
+oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests:main
+   |
+   v
+Flux OCIRepository (flux-system)
    |
    v
 Flux Kustomization: flux-system
@@ -41,13 +53,47 @@ bootstrap-wrapper.sh
    +--> creates or reuses Kind cluster
    +--> installs Cilium
    +--> installs Flux with image automation controllers
+   +--> applies OCIRepository + root Kustomization manifests
    +--> creates runtime Secret: wordpress-runtime-values
    +--> creates runtime Secret: weave-gitops-runtime-values
-   +--> waits for GitRepository, Kustomizations, HelmRelease, pods, and rollouts
+   +--> waits for OCIRepository, Kustomizations, HelmRelease, pods, and rollouts
    +--> starts port-forward to localhost
 ```
 
+## GitOps Artifact Pipeline
+
+The repository now uses a Flux D2-style delivery path.
+
+1. Developers commit and push to `main`.
+2. GitHub Actions runs `.github/workflows/gitops-artifact-pipeline.yml`.
+3. The workflow publishes the repo content as a reproducible OCI artifact to:
+   `oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests`
+4. The workflow publishes a mutable tag for the branch, such as `main`, and an immutable short-SHA tag for the same artifact.
+5. Cosign signs the resulting digest using GitHub OIDC keyless signing.
+6. Flux `source-controller` pulls the OCI artifact from GHCR through an `OCIRepository`.
+7. Flux `kustomize-controller` reconciles `./clusters/production` from the extracted artifact.
+
+This separates where humans work from what the cluster consumes. The cluster no longer needs direct access to GitHub to deploy the repo state.
+
+Important implication:
+
+- The bootstrap flow applies the initial `OCIRepository` and root `Kustomization` manifests from your local checkout.
+- After that, Flux reconciles from the OCI artifact currently published at `ghcr.io/khaledsaiidi/flux-helm-wp/manifests:main`.
+- Local-only manifest edits are not deployed until they are pushed, the GitHub Action publishes a new OCI artifact, and the `main` tag moves to the new digest.
+
 ## Screenshots
+
+### 0. GitHub Actions publishes and signs the GitOps OCI artifact
+
+This shows the `gitops-artifact` workflow succeeding: Flux CLI and Cosign are installed, artifact metadata is derived, the `main` and short-SHA tags are pushed to GHCR, and the digest is signed once with keyless Cosign.
+
+![GitHub Actions workflow publishing and signing the GitOps artifact](assets/image-0-action.png)
+
+### 0b. GHCR package view for the generated GitOps OCI artifact
+
+This shows the published GHCR package for `flux-helm-wp/manifests`, including the mutable `main` tag, immutable commit tags, and digest-based versions that Flux can pull.
+
+![GHCR package view for the GitOps OCI artifact](assets/image-0-package.png)
 
 ### 1. Wrapper prompts for runtime values and begins cluster creation
 
@@ -67,9 +113,9 @@ This is the `flux install` phase where Flux CRDs, RBAC, services, and controller
 
 ![Flux controllers installation](assets/image-3.png)
 
-### 4. Flux source, Kustomizations, and runtime Secret reconciliation
+### 4. Flux OCI source, Kustomizations, and runtime Secret reconciliation
 
-This screenshot shows the Git source becoming ready, the root and infrastructure Kustomizations succeeding, and the runtime Secret being created before the applications reconcile.
+This screenshot shows the OCI source becoming ready, the root and infrastructure Kustomizations succeeding, and the runtime Secret being created before the applications reconcile.
 
 ![Flux reconciliation and runtime Secret creation](assets/image-4.png)
 
@@ -114,14 +160,20 @@ kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wor
 │   └── wordpress/
 │       ├── helmrelease.yaml
 │       └── kustomization.yaml
+├── .github/
+│   └── workflows/
+│       └── gitops-artifact-pipeline.yml
 ├── assets/
+│   ├── image-0-action.png
+│   ├── image-0-package.png
 │   ├── image-1.png
 │   ├── image-2.png
 │   ├── image-3.png
 │   ├── image-4.png
 │   ├── image-5.png
 │   ├── image-6.png
-│   └── image-7.png
+│   ├── image-7.png
+│   └── image-8.png
 ├── bootstrap-wrapper.sh
 ├── clusters/
 │   └── production/
@@ -153,10 +205,19 @@ kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wor
 ### Flux
 
 - Flux is installed with `flux install --components-extra image-reflector-controller,image-automation-controller`
-- No GitHub PAT is required for the repo sync flow in this project
-- Flux reads the public repository over HTTPS
-- Flux sync starts from `clusters/production`
+- Flux reads the public OCI artifact from GHCR through an `OCIRepository`
+- Flux sync starts from `clusters/production` inside the extracted OCI artifact
+- The root source is `oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests`
+- The current tracked tag is `main`
 - Weave GitOps OSS is deployed as another Flux-managed HelmRelease in `flux-system`
+
+### GitHub Actions and GHCR
+
+- `.github/workflows/gitops-artifact-pipeline.yml` runs on pushes to `main` and on manual dispatch
+- The workflow uses the built-in `GITHUB_TOKEN` with `packages: write`; no PAT is required
+- The workflow publishes the GitOps artifact to GHCR in the same repository namespace
+- The workflow signs the published digest with Cosign keyless signing using GitHub OIDC
+- The GHCR package is public in this project, so Flux can pull it without a registry secret
 
 ### Credentials
 
@@ -185,6 +246,8 @@ chmod +x bootstrap-wrapper.sh
 ./bootstrap-wrapper.sh
 ```
 
+Before running the wrapper against a fresh repository state, make sure the GitHub Actions artifact pipeline has successfully published the current manifests to GHCR. The cluster now pulls from OCI, not from your local Git checkout after bootstrap.
+
 What the wrapper does:
 
 1. Prompts for WordPress, MariaDB, and Weave GitOps runtime values.
@@ -194,7 +257,7 @@ What the wrapper does:
 5. Waits for all nodes to become `Ready`.
 6. Installs Flux controllers.
 7. Applies `clusters/production/flux-system`.
-8. Reconciles the Git source and Flux Kustomizations.
+8. Reconciles the OCI source and Flux Kustomizations.
 9. Creates the runtime Secret in the `wordpress` namespace.
 10. Creates the runtime Secret for Weave GitOps in `flux-system`.
 11. Reconciles the applications layer.
@@ -308,10 +371,10 @@ kubectl apply -k clusters/production/flux-system
 ### 5. Wait for the source and Kustomizations
 
 ```bash
-flux reconcile source git flux-system
+flux reconcile source oci flux-system
 flux reconcile kustomization flux-system
 
-flux get sources git -A
+flux get sources oci -A
 flux get kustomizations -A
 ```
 
@@ -399,10 +462,10 @@ This keeps the repository cleaner and avoids committing admin and database passw
 
 ## Common Day 2 Commands
 
-### Check Git source and Flux status
+### Check OCI source and Flux status
 
 ```bash
-flux get sources git -A
+flux get sources oci -A
 flux get kustomizations -A
 flux get helmreleases -A
 ```
@@ -410,7 +473,7 @@ flux get helmreleases -A
 ### Force reconciliation
 
 ```bash
-flux reconcile source git flux-system
+flux reconcile source oci flux-system
 flux reconcile kustomization infrastructure
 flux reconcile kustomization applications
 ```
@@ -467,10 +530,16 @@ kubectl get nodes
 ### Flux source is not ready
 
 ```bash
-flux get sources git -A
-kubectl -n flux-system describe gitrepository flux-system
+flux get sources oci -A
+kubectl -n flux-system describe ocirepository flux-system
 kubectl -n flux-system logs deploy/source-controller --tail=100
 ```
+
+If the OCI source still does not become ready, verify that:
+
+- `ghcr.io/khaledsaiidi/flux-helm-wp/manifests:main` exists
+- the package is public, or you configured a pull secret
+- the GitHub Actions pipeline published the latest digest successfully
 
 ### Applications are not reconciling
 
@@ -496,6 +565,7 @@ Then open `http://localhost:8080`.
 
 - This repo is for learning and local experimentation.
 - The current secret flow is much better than hardcoding passwords in Git, but it is still a local bootstrap pattern, not full production secret management.
+- The cluster no longer reconciles directly from GitHub; it reconciles from the OCI artifact published to GHCR.
 - For a stronger production approach, look at SOPS, External Secrets Operator, or another real secret backend.
 
 ## License
