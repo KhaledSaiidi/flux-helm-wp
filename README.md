@@ -9,6 +9,7 @@ This repository is a small GitOps lab.
 - GitHub Actions packages this repository as a reproducible OCI artifact and pushes it to GHCR.
 - GitHub Actions signs that OCI artifact with Cosign using GitHub OIDC.
 - Flux watches the OCI artifact in GHCR, not the Git repository directly.
+- Flux verifies the OCI artifact signature against the GitHub Actions OIDC identity before reconciliation.
 - Flux reconciles the `clusters/production` path from the extracted OCI artifact.
 - The infrastructure layer creates the `wordpress` namespace and registers the Bitnami Helm repository.
 - The applications layer creates `HelmRelease` objects for WordPress and Weave GitOps OSS.
@@ -33,6 +34,8 @@ oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests:main
    |
    v
 Flux OCIRepository (flux-system)
+   |
+   +--> verify: cosign keyless + GitHub OIDC identity match
    |
    v
 Flux Kustomization: flux-system
@@ -71,7 +74,8 @@ The repository now uses a Flux D2-style delivery path.
 4. The workflow publishes a mutable tag for the branch, such as `main`, and an immutable short-SHA tag for the same artifact.
 5. Cosign signs the resulting digest using GitHub OIDC keyless signing.
 6. Flux `source-controller` pulls the OCI artifact from GHCR through an `OCIRepository`.
-7. Flux `kustomize-controller` reconciles `./clusters/production` from the extracted artifact.
+7. Flux verifies the OCI artifact signature with Cosign keyless verification and checks that the signing identity matches the GitHub Actions workflow.
+8. Flux `kustomize-controller` reconciles `./clusters/production` from the extracted artifact only after verification succeeds.
 
 This separates where humans work from what the cluster consumes. The cluster no longer needs direct access to GitHub to deploy the repo state.
 
@@ -206,6 +210,8 @@ kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wor
 
 - Flux is installed with `flux install --components-extra image-reflector-controller,image-automation-controller`
 - Flux reads the public OCI artifact from GHCR through an `OCIRepository`
+- Flux verifies the OCI artifact with `verify.provider: cosign`
+- Flux only accepts signatures issued by GitHub Actions OIDC for `.github/workflows/gitops-artifact-pipeline.yml` on `main`
 - Flux sync starts from `clusters/production` inside the extracted OCI artifact
 - The root source is `oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests`
 - The current tracked tag is `main`
@@ -218,6 +224,21 @@ kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wor
 - The workflow publishes the GitOps artifact to GHCR in the same repository namespace
 - The workflow signs the published digest with Cosign keyless signing using GitHub OIDC
 - The GHCR package is public in this project, so Flux can pull it without a registry secret
+
+### Signature Verification
+
+The root `OCIRepository` in `clusters/production/flux-system/gotk-sync.yaml` uses Flux Cosign verification with GitHub Actions OIDC identity matching.
+
+That means the cluster trusts the GitOps artifact only when all of the following are true:
+
+- the artifact is present in `ghcr.io/khaledsaiidi/flux-helm-wp/manifests`
+- the artifact has a valid Cosign signature
+- the signature was issued through GitHub's OIDC issuer: `https://token.actions.githubusercontent.com`
+- the signing identity matches this workflow on this repository:
+  `.github/workflows/gitops-artifact-pipeline.yml`
+- the signing identity came from the `main` branch
+
+In other words, signing in CI is not just informational anymore. Flux enforces that verification before applying the artifact content.
 
 ### Credentials
 
