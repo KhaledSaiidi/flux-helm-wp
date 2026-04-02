@@ -351,16 +351,16 @@ main() {
   log step "waiting for all nodes to become Ready"
   kubectl wait --for=condition=Ready nodes --all --timeout=300s
   kubectl get nodes
-
+  
   log step "installing Flux controllers"
   flux install --components-extra image-reflector-controller,image-automation-controller
 
   log step "applying Flux sync manifests from this repository"
   kubectl apply -k "$SCRIPT_DIR/clusters/production/flux-system"
 
-  log step "reconciling Git source"
-  flux reconcile source git flux-system
-  wait_for_condition flux-system gitrepository flux-system 180
+  log step "reconciling OCI source"
+  flux reconcile source oci flux-system
+  wait_for_condition flux-system ocirepository flux-system 180
 
   log step "reconciling root Flux Kustomization"
   flux reconcile kustomization flux-system

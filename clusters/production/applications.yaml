@@ -11,5 +11,5 @@ spec:
   dependsOn:
     - name: infrastructure
   sourceRef:
-    kind: GitRepository
+    kind: OCIRepository
     name: flux-system
