@@ -11,6 +11,11 @@ spec:
   layerSelector:
     mediaType: application/vnd.cncf.flux.content.v1.tar+gzip
     operation: extract
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: "^https://token.actions.githubusercontent.com$"
+        subject: "^https://github.com/KhaledSaiidi/flux-helm-wp/.github/workflows/gitops-artifact-pipeline.yml@refs/heads/main$"
 
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
