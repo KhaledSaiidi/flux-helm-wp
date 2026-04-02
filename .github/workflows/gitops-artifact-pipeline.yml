@@ -1,0 +1,149 @@
+name: GitOps Artifact Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  push-gitops-artifact:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: "🚀 Starting GitOps artifact pipeline workflow"
+        run: |
+          echo "🚀 GitOps artifact pipeline workflow started"
+          echo "🧭 Runner: ${RUNNER_NAME} (${RUNNER_OS})"
+          echo "📦 Repository: ${GITHUB_REPOSITORY}"
+          echo "🌿 Ref: ${GITHUB_REF_NAME}"
+          echo "🔖 Commit: ${GITHUB_SHA}"
+
+      - name: "📦 Checkout result"
+        if: ${{ always() }}
+        run: |
+          if [ "${{ steps.checkout.outcome }}" = "success" ]; then
+            echo "✅ Checkout completed"
+          else
+            echo "❌ Checkout failed (outcome: ${{ steps.checkout.outcome }})"
+            exit 1
+          fi
+
+      - name: Setup Flux CLI
+        id: setup_flux
+        uses: fluxcd/flux2/action@main
+        with:
+          version: latest
+
+      - name: Setup Cosign
+        id: setup_cosign
+        uses: sigstore/cosign-installer@main
+        with:
+          cosign-release: latest
+
+      - name: "🧰 Tooling setup result"
+        if: ${{ always() }}
+        run: |
+          if [ "${{ steps.setup_flux.outcome }}" != "success" ]; then
+            echo "❌ Flux CLI setup failed (outcome: ${{ steps.setup_flux.outcome }})"
+            exit 1
+          fi
+
+          if [ "${{ steps.setup_cosign.outcome }}" != "success" ]; then
+            echo "❌ Cosign setup failed (outcome: ${{ steps.setup_cosign.outcome }})"
+            exit 1
+          fi
+
+          echo "✅ Flux CLI and Cosign setup completed"
+
+      - name: Derive artifact metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+
+          repository_path="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          ref_tag="$(printf '%s' "${GITHUB_REF_NAME}" | tr '/_' '--' | tr '[:upper:]' '[:lower:]')"
+          sha_tag="$(git rev-parse --short HEAD)"
+          source_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          revision="${GITHUB_REF_NAME}@sha1:${GITHUB_SHA}"
+          oci_repo="oci://ghcr.io/${repository_path}/manifests"
+
+          {
+            echo "OCI_REPO=${oci_repo}"
+            echo "REF_TAG=${ref_tag}"
+            echo "SHA_TAG=${sha_tag}"
+            echo "SOURCE_URL=${source_url}"
+            echo "REVISION=${revision}"
+          } >> "${GITHUB_ENV}"
+
+          {
+            echo "oci_repo=${oci_repo}"
+            echo "ref_tag=${ref_tag}"
+            echo "sha_tag=${sha_tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "✅ OCI repository: ${oci_repo}"
+          echo "✅ Mutable tag: ${ref_tag}"
+          echo "✅ Immutable tag: ${sha_tag}"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push and sign manifests
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          set -euo pipefail
+
+          declare -A DIGESTS=()
+          declare -A SIGNED_DIGESTS=()
+
+          for artifact_tag in "${REF_TAG}" "${SHA_TAG}"; do
+            echo "📤 Pushing artifact tag: ${artifact_tag}"
+
+            digest_url="$(flux push artifact \
+              "${OCI_REPO}:${artifact_tag}" \
+              --path="." \
+              --source="${SOURCE_URL}" \
+              --revision="${REVISION}" \
+              --output=json | jq -r '.repository + "@" + .digest')"
+
+            if [ -z "${digest_url}" ] || [ "${digest_url}" = "null" ]; then
+              echo "❌ Failed to resolve digest for tag ${artifact_tag}"
+              exit 1
+            fi
+
+            DIGESTS["${artifact_tag}"]="${digest_url}"
+
+            if [ -z "${SIGNED_DIGESTS[${digest_url}]:-}" ]; then
+              echo "✍️ Signing ${digest_url}"
+              cosign sign --yes "${digest_url}"
+              SIGNED_DIGESTS["${digest_url}"]=true
+            else
+              echo "ℹ️ Digest already signed: ${digest_url}"
+            fi
+          done
+
+          {
+            echo "## Published GitOps OCI artifacts"
+            echo ""
+            echo "- Repository: \`${OCI_REPO}\`"
+            echo "- Mutable tag: \`${REF_TAG}\`"
+            echo "- Mutable digest: \`${DIGESTS[${REF_TAG}]}\`"
+            echo "- Immutable tag: \`${SHA_TAG}\`"
+            echo "- Immutable digest: \`${DIGESTS[${SHA_TAG}]}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
