@@ -120,6 +120,7 @@ jobs:
               --path="." \
               --source="${SOURCE_URL}" \
               --revision="${REVISION}" \
+              --reproducible \
               --output=json | jq -r '.repository + "@" + .digest')"
 
             if [ -z "${digest_url}" ] || [ "${digest_url}" = "null" ]; then
