@@ -34,3 +34,5 @@ spec:
   values:
     adminUser:
       create: true
+    image:
+      tag: v0.39.1-rc.1
