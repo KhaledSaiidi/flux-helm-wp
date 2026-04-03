@@ -30,7 +30,7 @@ GitHub Actions: gitops-artifact-pipeline.yml
    |
    v
 GHCR OCI Artifact
-oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests:main
+oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests:v1.0.0
    |
    v
 Flux OCIRepository (flux-system)
@@ -67,35 +67,37 @@ bootstrap-wrapper.sh
 
 The repository now uses a Flux D2-style delivery path.
 
-1. Developers commit and push to `main`.
-2. GitHub Actions runs `.github/workflows/gitops-artifact-pipeline.yml`.
-3. The workflow publishes the repo content as a reproducible OCI artifact to:
+1. Developers prepare a release on top of the repository history.
+2. A Git tag such as `v1.0.0` is pushed.
+3. GitHub Actions runs `.github/workflows/gitops-artifact-pipeline.yml` for that tag.
+4. The workflow publishes the repo content as a reproducible OCI artifact to:
    `oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests`
-4. The workflow publishes a mutable tag for the branch, such as `main`, and an immutable short-SHA tag for the same artifact.
-5. Cosign signs the resulting digest using GitHub OIDC keyless signing.
-6. Flux `source-controller` pulls the OCI artifact from GHCR through an `OCIRepository`.
-7. Flux verifies the OCI artifact signature with Cosign keyless verification and checks that the signing identity matches the GitHub Actions workflow.
-8. Flux `kustomize-controller` reconciles `./clusters/production` from the extracted artifact only after verification succeeds.
+5. The workflow publishes the release tag, such as `v1.0.0`, and an immutable short-SHA tag for the same artifact.
+6. Cosign signs the resulting digest using GitHub OIDC keyless signing.
+7. Flux `source-controller` pulls the OCI artifact from GHCR through an `OCIRepository`.
+8. Flux selects the highest matching release tag using `ref.semver`.
+9. Flux verifies the OCI artifact signature with Cosign keyless verification and checks that the signing identity matches the GitHub Actions tag-based workflow identity.
+10. Flux `kustomize-controller` reconciles `./clusters/production` from the extracted artifact only after verification succeeds.
 
 This separates where humans work from what the cluster consumes. The cluster no longer needs direct access to GitHub to deploy the repo state.
 
 Important implication:
 
 - The bootstrap flow applies the initial `OCIRepository` and root `Kustomization` manifests from your local checkout.
-- After that, Flux reconciles from the OCI artifact currently published at `ghcr.io/khaledsaiidi/flux-helm-wp/manifests:main`.
-- Local-only manifest edits are not deployed until they are pushed, the GitHub Action publishes a new OCI artifact, and the `main` tag moves to the new digest.
+- After that, Flux reconciles from the highest matching semver release published at `ghcr.io/khaledsaiidi/flux-helm-wp/manifests`.
+- Local-only manifest edits are not deployed until they are committed, released with a Git tag like `v1.0.0`, and the GitHub Action publishes the new OCI artifact.
 
 ## Screenshots
 
 ### 0. GitHub Actions publishes and signs the GitOps OCI artifact
 
-This shows the `gitops-artifact` workflow succeeding: Flux CLI and Cosign are installed, artifact metadata is derived, the `main` and short-SHA tags are pushed to GHCR, and the digest is signed once with keyless Cosign.
+This shows the `gitops-artifact` workflow succeeding: Flux CLI and Cosign are installed, artifact metadata is derived, the release tag and short-SHA tag are pushed to GHCR, and the digest is signed once with keyless Cosign.
 
 ![GitHub Actions workflow publishing and signing the GitOps artifact](assets/image-0-action.png)
 
 ### 0b. GHCR package view for the generated GitOps OCI artifact
 
-This shows the published GHCR package for `flux-helm-wp/manifests`, including the mutable `main` tag, immutable commit tags, and digest-based versions that Flux can pull.
+This shows the published GHCR package for `flux-helm-wp/manifests`, including release tags, immutable commit tags, and digest-based versions that Flux can pull.
 
 ![GHCR package view for the GitOps OCI artifact](assets/image-0-package.png)
 
@@ -211,15 +213,17 @@ kubectl -n wordpress get secret wordpress-runtime-values -o jsonpath='{.data.wor
 - Flux is installed with `flux install --components-extra image-reflector-controller,image-automation-controller`
 - Flux reads the public OCI artifact from GHCR through an `OCIRepository`
 - Flux verifies the OCI artifact with `verify.provider: cosign`
-- Flux only accepts signatures issued by GitHub Actions OIDC for `.github/workflows/gitops-artifact-pipeline.yml` on `main`
+- Flux selects the highest matching OCI release tag with `ref.semver: ">=1.0.0"`
+- Flux only accepts signatures issued by GitHub Actions OIDC for `.github/workflows/gitops-artifact-pipeline.yml` on release tags matching `v*.*.*`
 - Flux sync starts from `clusters/production` inside the extracted OCI artifact
 - The root source is `oci://ghcr.io/khaledsaiidi/flux-helm-wp/manifests`
-- The current tracked tag is `main`
+- The current tracked release range is `>=1.0.0`
 - Weave GitOps OSS is deployed as another Flux-managed HelmRelease in `flux-system`
 
 ### GitHub Actions and GHCR
 
-- `.github/workflows/gitops-artifact-pipeline.yml` runs on pushes to `main` and on manual dispatch
+- `.github/workflows/gitops-artifact-pipeline.yml` runs on pushes to semver-style Git tags such as `v1.0.0`
+- Manual `workflow_dispatch` is kept, but the job only runs when the selected ref is a release tag starting with `v`
 - The workflow uses the built-in `GITHUB_TOKEN` with `packages: write`; no PAT is required
 - The workflow publishes the GitOps artifact to GHCR in the same repository namespace
 - The workflow signs the published digest with Cosign keyless signing using GitHub OIDC
@@ -236,7 +240,7 @@ That means the cluster trusts the GitOps artifact only when all of the following
 - the signature was issued through GitHub's OIDC issuer: `https://token.actions.githubusercontent.com`
 - the signing identity matches this workflow on this repository:
   `.github/workflows/gitops-artifact-pipeline.yml`
-- the signing identity came from the `main` branch
+- the signing identity came from a release tag matching `v*.*.*`
 
 In other words, signing in CI is not just informational anymore. Flux enforces that verification before applying the artifact content.
 
@@ -559,6 +563,7 @@ kubectl -n flux-system logs deploy/source-controller --tail=100
 If the OCI source still does not become ready, verify that:
 
 - `ghcr.io/khaledsaiidi/flux-helm-wp/manifests:main` exists
+- a matching semver release such as `ghcr.io/khaledsaiidi/flux-helm-wp/manifests:v1.0.0` exists
 - the package is public, or you configured a pull secret
 - the GitHub Actions pipeline published the latest digest successfully
 
