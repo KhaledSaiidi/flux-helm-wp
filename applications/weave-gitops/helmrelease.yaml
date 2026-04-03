@@ -35,4 +35,4 @@ spec:
     adminUser:
       create: true
     image:
-      tag: v0.39.1-rc.1
+      tag: v0.39.0-rc.2
